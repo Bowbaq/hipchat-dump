@@ -4,5 +4,5 @@ deployment:
     commands:
       - go get github.com/mitchellh/gox
       - go get github.com/tcnksm/ghr
-      - gox -output "dist/hipchat_{{.OS}}_{{.Arch}}"
+      - gox -ldflags "-X main.Version $CIRCLE_BUILD_NUM" -output "dist/hipchat_{{.OS}}_{{.Arch}}"
       - ghr -t $GITHUB_TOKEN -u $CIRCLE_PROJECT_USERNAME -r $CIRCLE_PROJECT_REPONAME "v$CIRCLE_BUILD_NUM" dist/

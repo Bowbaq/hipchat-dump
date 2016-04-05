@@ -30,6 +30,7 @@ func main() {
 	app := cli.NewApp()
 	app.Name = "hipchat"
 	app.Usage = "Archive your HipChat private messages and search them"
+	app.Version = Version
 	app.HideVersion = true
 
 	app.Commands = []cli.Command{
