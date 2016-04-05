@@ -9,10 +9,16 @@ import (
 	"path"
 	"sort"
 	"strconv"
+	"strings"
+	"sync"
 	"time"
 
+	"github.com/blevesearch/bleve"
+	"github.com/blevesearch/bleve/search"
+	_ "github.com/blevesearch/bleve/search/highlight/highlighters/ansi"
 	"github.com/codegangsta/cli"
 	"github.com/mitchellh/go-homedir"
+	"github.com/mitchellh/go-wordwrap"
 	"github.com/tbruyelle/hipchat-go/hipchat"
 )
 
@@ -44,8 +50,9 @@ func main() {
 					Usage: "(required) HipChat auth token with view_group, view_messages scope.\n\tSee https://www.hipchat.com/account/api",
 				},
 				cli.StringFlag{
-					Name:  "filename, f",
-					Usage: "Path of the file where the archive will be written",
+					Name:  "archive, a",
+					Value: defaultArchivePath(),
+					Usage: "Path to the HipChat message archive",
 				},
 			},
 			Action: func(c *cli.Context) {
@@ -54,14 +61,77 @@ func main() {
 					return
 				}
 
-				filename := c.String("filename")
-				if filename == "" {
-					filename = defaultArchivePath()
-					check(os.MkdirAll(path.Dir(filename), 0755))
+				archivePath := c.String("filename")
+				check(dumpMessages(c.String("token"), archivePath))
+				fmt.Println("Archive was written at", archivePath)
+			},
+		},
+		{
+			Name:    "index",
+			Aliases: []string{"i"},
+			Usage:   "Indexes your HipChat private messages archive for fast search",
+			Flags: []cli.Flag{
+				cli.StringFlag{
+					Name:  "archive, a",
+					Value: defaultArchivePath(),
+					Usage: "Path to the HipChat message archive",
+				},
+				cli.StringFlag{
+					Name:  "index, i",
+					Value: defaultIndexPath(),
+					Usage: "Path to the HipChat message index",
+				},
+			},
+			Action: func(c *cli.Context) {
+				archivePath := c.String("archive")
+				indexPath := c.String("index")
+				check(indexMessages(archivePath, indexPath))
+			},
+		},
+		{
+			Name:    "search",
+			Aliases: []string{"s"},
+			Usage:   "Search your HipChat private messages archive (must index first)",
+			Flags: []cli.Flag{
+				cli.StringFlag{
+					Name:  "index, i",
+					Value: defaultIndexPath(),
+					Usage: "Path to the HipChat message index",
+				},
+			},
+			Action: func(c *cli.Context) {
+				if c.NArg() < 1 {
+					fmt.Println("Usage: hipchat search <query>")
+					return
+				}
+				index, err := bleve.Open(c.String("index"))
+				check(err)
+
+				q := bleve.NewQueryStringQuery(strings.Join(c.Args(), " "))
+				req := bleve.NewSearchRequest(q)
+				req.Fields = []string{"From", "To", "Body", "Date"}
+				res, err := index.Search(req)
+				check(err)
+
+				if res.Total == 0 {
+					fmt.Println("No matches")
+					return
 				}
 
-				check(dumpMessages(c.String("token"), filename))
-				fmt.Println("Archive was written at", filename)
+				var actualHits search.DocumentMatchCollection
+				for _, hit := range res.Hits {
+					if hit.Score > 0.5 {
+						actualHits = append(actualHits, hit)
+					}
+				}
+
+				fmt.Printf("%d matche(s), took %s\n", len(actualHits), res.Took)
+				for i, hit := range actualHits {
+					fmt.Printf("%5d. score: %f\n", i+1, hit.Score)
+					fmt.Printf("\tFrom: %s To: %s - %s\n", hit.Fields["From"], hit.Fields["To"], hit.Fields["Date"])
+					fmt.Println()
+					fmt.Printf("\t%s\n", strings.Join(strings.Split(wordwrap.WrapString(hit.Fields["Body"].(string), 120), "\n"), "\n\t"))
+				}
 			},
 		},
 	}
@@ -69,7 +139,7 @@ func main() {
 	app.Run(os.Args)
 }
 
-func dumpMessages(token, filename string) error {
+func dumpMessages(token, archivePath string) error {
 	h := hipchat.NewClient(token)
 
 	users, err := getUsers(h)
@@ -89,8 +159,12 @@ func dumpMessages(token, filename string) error {
 	if err != nil {
 		return err
 	}
+	err = os.MkdirAll(path.Dir(archivePath), 0755)
+	if err != nil {
+		return err
+	}
 
-	return ioutil.WriteFile(filename, encoded, 0655)
+	return ioutil.WriteFile(archivePath, encoded, 0655)
 }
 
 func getUsers(h *hipchat.Client) ([]hipchat.User, error) {
@@ -188,10 +262,92 @@ func getMessagesPage(h *hipchat.Client, userID int, date string, startIndex int)
 	return messages
 }
 
+func indexMessages(archivePath, indexPath string) error {
+	fmt.Print("Reading HipChat archive")
+	var hArchive archive
+	data, err := ioutil.ReadFile(archivePath)
+	if err != nil {
+		return err
+	}
+	err = json.Unmarshal(data, &hArchive)
+	if err != nil {
+		return err
+	}
+	fmt.Println(" - Done")
+
+	usersByID := make(map[string]*hipchat.User)
+	for i, u := range hArchive.Users {
+		usersByID[strconv.Itoa(u.ID)] = &hArchive.Users[i]
+	}
+
+	fmt.Print("Creating index")
+	os.RemoveAll(indexPath)
+
+	mapping := bleve.NewIndexMapping()
+	index, err := bleve.New(indexPath, mapping)
+	if err != nil {
+		return err
+	}
+	fmt.Println(" - Done")
+
+	type IndexedMessage struct {
+		From []string
+		To   []string
+		Body string
+		Date string
+	}
+
+	fmt.Print("Indexing messages")
+	var wg sync.WaitGroup
+	for recipientID, conversation := range hArchive.Conversations {
+		if len(conversation) == 0 {
+			continue
+		}
+		wg.Add(1)
+		go func(toID string, messages []*hipchat.Message) {
+			defer wg.Done()
+			to := usersByID[toID]
+			batch := index.NewBatch()
+
+			for _, m := range messages {
+				batch.Index(m.ID, IndexedMessage{
+					From: names(m.From),
+					To:   []string{to.MentionName, to.Name},
+					Body: m.Message,
+					Date: m.Date,
+				})
+			}
+			check(index.Batch(batch))
+		}(recipientID, conversation)
+	}
+	wg.Wait()
+	index.Close()
+	fmt.Println(" - Done")
+
+	return nil
+}
+
+func names(data interface{}) []string {
+	switch from := data.(type) {
+	case string:
+		return []string{from}
+	case map[string]interface{}:
+		return []string{from["mention_name"].(string), from["name"].(string)}
+	}
+
+	return []string{}
+}
+
 func defaultArchivePath() string {
 	home, err := homedir.Dir()
 	check(err)
 	return path.Join(home, ".hipchat", "archive.json")
+}
+
+func defaultIndexPath() string {
+	home, err := homedir.Dir()
+	check(err)
+	return path.Join(home, ".hipchat", "index.bleve")
 }
 
 func check(err error) {
