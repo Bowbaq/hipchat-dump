@@ -6,11 +6,13 @@ import (
 	"io/ioutil"
 	"log"
 	"os"
+	"path"
 	"sort"
 	"strconv"
 	"time"
 
 	"github.com/codegangsta/cli"
+	"github.com/mitchellh/go-homedir"
 	"github.com/tbruyelle/hipchat-go/hipchat"
 )
 
@@ -18,6 +20,11 @@ var (
 	Version     string
 	apiPageSize = 1000
 )
+
+type archive struct {
+	Users         []hipchat.User
+	Conversations map[string][]*hipchat.Message
+}
 
 func main() {
 	app := cli.NewApp()
@@ -37,7 +44,6 @@ func main() {
 				},
 				cli.StringFlag{
 					Name:  "filename, f",
-					Value: "dump.json",
 					Usage: "Path of the file where the archive will be written",
 				},
 			},
@@ -46,16 +52,15 @@ func main() {
 					cli.ShowSubcommandHelp(c)
 					return
 				}
-				check(dumpMessages(c.String("token"), c.String("filename")))
-				fmt.Println("Archive was written at", c.String("filename"))
-			},
-		},
-		{
-			Name:    "search",
-			Aliases: []string{"s"},
-			Usage:   "Search your archive of HipChat private messages. You must use `hipchat dump` first",
-			Action: func(c *cli.Context) {
-				fmt.Println("Not implemented yet")
+
+				filename := c.String("filename")
+				if filename == "" {
+					filename = defaultArchivePath()
+					check(os.MkdirAll(path.Dir(filename), 0755))
+				}
+
+				check(dumpMessages(c.String("token"), filename))
+				fmt.Println("Archive was written at", filename)
 			},
 		},
 	}
@@ -76,9 +81,9 @@ func dumpMessages(token, filename string) error {
 		conversations[strconv.Itoa(user.ID)] = getMessages(h, user.ID)
 	}
 
-	encoded, err := json.MarshalIndent(map[string]interface{}{
-		"users":         users,
-		"conversations": conversations,
+	encoded, err := json.MarshalIndent(archive{
+		Users:         users,
+		Conversations: conversations,
 	}, "", "    ")
 	if err != nil {
 		return err
@@ -104,6 +109,12 @@ func getUsers(h *hipchat.Client) ([]hipchat.User, error) {
 
 	return users, err
 }
+
+type byMostRecent []*hipchat.Message
+
+func (msgs byMostRecent) Len() int           { return len(msgs) }
+func (msgs byMostRecent) Less(i, j int) bool { return msgs[i].Date > msgs[j].Date }
+func (msgs byMostRecent) Swap(i, j int)      { msgs[i], msgs[j] = msgs[j], msgs[i] }
 
 func getMessages(h *hipchat.Client, userID int) []*hipchat.Message {
 	fmt.Printf("Getting messages for %d", userID)
@@ -176,15 +187,15 @@ func getMessagesPage(h *hipchat.Client, userID int, date string, startIndex int)
 	return messages
 }
 
+func defaultArchivePath() string {
+	home, err := homedir.Dir()
+	check(err)
+	return path.Join(home, ".hipchat", "archive.json")
+}
+
 func check(err error) {
 	if err != nil {
 		fmt.Println(err)
 		os.Exit(-1)
 	}
 }
-
-type byMostRecent []*hipchat.Message
-
-func (msgs byMostRecent) Len() int           { return len(msgs) }
-func (msgs byMostRecent) Less(i, j int) bool { return msgs[i].Date > msgs[j].Date }
-func (msgs byMostRecent) Swap(i, j int)      { msgs[i], msgs[j] = msgs[j], msgs[i] }
