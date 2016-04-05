@@ -14,7 +14,6 @@ for your machine. Some common platforms:
 | ----------- | --------------------------: |
 | **OSX**     |      `hipchat_darwin_amd64` |
 | **Linux**   |       `hipchat_linux_amd64` |
-| **Windows** | `hipchat_windows_amd64.exe` |
 
 Usage: `hipchat dump -t <your api token>`
 
