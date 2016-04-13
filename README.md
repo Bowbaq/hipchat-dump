@@ -36,9 +36,9 @@ In order to get your private messages from HipChat you'll first need to obtain a
 
    This might take a while. If it looks like it's hanging, just wait a few minutes, the API rate limits are low.
 
-6. You're done. To browse your archive, you can run `open "$HOME/Documents/hipchat-messages.zip"` in the Terminal.
-
    ![Usage](/imgs/usage.png?raw=true "Usage")
+
+6. You're done. To browse your archive, you can run `open "$HOME/Documents/hipchat-messages.zip"` in the Terminal.
 
 ## Development
 
