@@ -1,0 +1,37 @@
+#!/usr/bin/env bash
+
+set -e
+set -o pipefail
+
+get_latest_url() {
+  local PLATFORM="$1"
+  local TAG="$(curl -sL "https://api.github.com/repos/Bowbaq/hipchat/releases/latest" | grep "tag_name" | grep -Eo 'v[0-9]+')"
+
+  echo "https://github.com/Bowbaq/hipchat/releases/download/${TAG}/hipchat_${PLATFORM}_amd64"
+}
+
+do_install() {
+  local PLATFORM="$1"
+  local INSTALL_PATH="$2"
+
+  local URL=$(get_latest_url "$PLATFORM")
+  curl -sL -o "$INSTALL_PATH/hipchat" "$URL"
+  chmod u+x "$INSTALL_PATH/hipchat"
+
+  echo "Installation complete"
+  echo "Usage: $INSTALL_PATH/hipchat dump -t <api token> -f $HOME/Documents"
+}
+
+install_osx() {
+  do_install "darwin" "/usr/local"
+}
+
+install_linux() {
+  do_install "linux" "/usr/local"
+}
+
+case "$OSTYPE" in
+  darwin*)  install_osx ;;
+  linux*)   install_linux ;;
+  *)        echo "unknown: $OSTYPE" ;;
+esac
