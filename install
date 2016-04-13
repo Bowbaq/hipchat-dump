@@ -19,7 +19,6 @@ do_install() {
   chmod u+x "$INSTALL_PATH/hipchat"
 
   echo "Installation complete"
-  echo "Usage: $INSTALL_PATH/hipchat dump -t <api token> -f $HOME/Documents"
 }
 
 install_osx() {
