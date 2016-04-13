@@ -1,6 +1,8 @@
 package main
 
 import (
+	"archive/zip"
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"io/ioutil"
@@ -9,6 +11,7 @@ import (
 	"path"
 	"sort"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/codegangsta/cli"
@@ -22,7 +25,7 @@ var (
 )
 
 type archive struct {
-	Users         []hipchat.User
+	Users         map[string]*hipchat.User
 	Conversations map[string][]*hipchat.Message
 }
 
@@ -45,7 +48,7 @@ func main() {
 				},
 				cli.StringFlag{
 					Name:  "filename, f",
-					Usage: "Path of the file where the archive will be written",
+					Usage: "Path where the archive will be written. Defaults to " + defaultArchivePath(),
 				},
 			},
 			Action: func(c *cli.Context) {
@@ -57,7 +60,6 @@ func main() {
 				filename := c.String("filename")
 				if filename == "" {
 					filename = defaultArchivePath()
-					check(os.MkdirAll(path.Dir(filename), 0755))
 				}
 
 				check(dumpMessages(c.String("token"), filename))
@@ -65,7 +67,6 @@ func main() {
 			},
 		},
 	}
-
 	app.Run(os.Args)
 }
 
@@ -82,18 +83,10 @@ func dumpMessages(token, filename string) error {
 		conversations[strconv.Itoa(user.ID)] = getMessages(h, user.ID)
 	}
 
-	encoded, err := json.MarshalIndent(archive{
-		Users:         users,
-		Conversations: conversations,
-	}, "", "    ")
-	if err != nil {
-		return err
-	}
-
-	return ioutil.WriteFile(filename, encoded, 0655)
+	return writeArchive(users, conversations, filename)
 }
 
-func getUsers(h *hipchat.Client) ([]hipchat.User, error) {
+func getUsers(h *hipchat.Client) (map[string]*hipchat.User, error) {
 	fmt.Print("Getting users")
 	opt := &hipchat.UserListOptions{
 		ListOptions: hipchat.ListOptions{
@@ -108,14 +101,19 @@ func getUsers(h *hipchat.Client) ([]hipchat.User, error) {
 	}
 	fmt.Printf(" - Done [%d]\n", len(users))
 
-	return users, err
+	usersByID := make(map[string]*hipchat.User)
+	for i, user := range users {
+		usersByID[strconv.Itoa(user.ID)] = &users[i]
+	}
+
+	return usersByID, err
 }
 
-type byMostRecent []*hipchat.Message
+type byLeastRecent []*hipchat.Message
 
-func (msgs byMostRecent) Len() int           { return len(msgs) }
-func (msgs byMostRecent) Less(i, j int) bool { return msgs[i].Date > msgs[j].Date }
-func (msgs byMostRecent) Swap(i, j int)      { msgs[i], msgs[j] = msgs[j], msgs[i] }
+func (msgs byLeastRecent) Len() int           { return len(msgs) }
+func (msgs byLeastRecent) Less(i, j int) bool { return msgs[i].Date < msgs[j].Date }
+func (msgs byLeastRecent) Swap(i, j int)      { msgs[i], msgs[j] = msgs[j], msgs[i] }
 
 func getMessages(h *hipchat.Client, userID int) []*hipchat.Message {
 	fmt.Printf("Getting messages for %d", userID)
@@ -145,7 +143,7 @@ func getMessages(h *hipchat.Client, userID int) []*hipchat.Message {
 	for _, msg := range uniqueMessages {
 		messages = append(messages, msg)
 	}
-	sort.Sort(byMostRecent(messages))
+	sort.Sort(byLeastRecent(messages))
 	fmt.Printf(" - Done [%d]\n", len(messages))
 
 	return messages
@@ -188,10 +186,155 @@ func getMessagesPage(h *hipchat.Client, userID int, date string, startIndex int)
 	return messages
 }
 
+func writeArchive(users map[string]*hipchat.User, conversations map[string][]*hipchat.Message, filename string) error {
+	buf := new(bytes.Buffer)
+	w := zip.NewWriter(buf)
+
+	for userID, conversation := range conversations {
+		if len(conversation) == 0 {
+			continue
+		}
+
+		username := users[userID].Name
+		if username == "" {
+			username = users[userID].MentionName
+		}
+		f, err := w.Create("conversations/" + username + ".txt")
+		if err != nil {
+			return err
+		}
+		for _, day := range pack(conversation) {
+			date := day.date.Format("Monday January 2, 2006")
+			fmt.Fprintln(f, strings.Repeat(" ", 44), date, strings.Repeat(" ", 74-len(date)))
+			fmt.Fprintln(f, strings.Repeat("-", 120))
+
+			for _, usermsgs := range day.msgsByUser {
+				fmt.Fprintf(f, "%-30s | %s\n", usermsgs.username, formatmsg(usermsgs.msgs[0]))
+				for _, msg := range usermsgs.msgs[1:] {
+					fmt.Fprintf(f, "%-30s | %s\n", "", formatmsg(msg))
+				}
+				fmt.Fprintln(f, strings.Repeat("-", 120))
+			}
+		}
+	}
+
+	f, err := w.Create("machine-readable.json")
+	if err != nil {
+		return err
+	}
+
+	encoded, err := json.MarshalIndent(archive{
+		Users:         users,
+		Conversations: conversations,
+	}, "", "    ")
+	if err != nil {
+		return err
+	}
+
+	_, err = f.Write(encoded)
+	if err != nil {
+		return err
+	}
+
+	err = w.Close()
+	if err != nil {
+		return err
+	}
+
+	return ioutil.WriteFile(filename, buf.Bytes(), 0655)
+}
+
 func defaultArchivePath() string {
 	home, err := homedir.Dir()
 	check(err)
-	return path.Join(home, ".hipchat", "archive.json")
+	return path.Join(home, "Documents", "hipchat-archive.zip")
+}
+
+type day struct {
+	date       time.Time
+	msgsByUser []*usermsg
+}
+
+type usermsg struct {
+	username string
+	msgs     []string
+}
+
+func pack(messages []*hipchat.Message) []*day {
+	var days []*day
+
+	t, err := time.Parse(time.RFC3339Nano, messages[0].Date)
+	check(err)
+
+	currentDay := &day{date: t}
+	currentMsgs := []*hipchat.Message{}
+	for _, msg := range messages {
+		t, err := time.Parse(time.RFC3339Nano, msg.Date)
+		check(err)
+
+		if t.YearDay() != currentDay.date.YearDay() {
+			currentDay.msgsByUser = packmsgs(currentMsgs)
+			days = append(days, currentDay)
+			currentDay = &day{
+				date: t.Truncate(24 * time.Hour),
+			}
+			currentMsgs = []*hipchat.Message{}
+		}
+
+		currentMsgs = append(currentMsgs, msg)
+	}
+
+	currentDay.msgsByUser = packmsgs(currentMsgs)
+	days = append(days, currentDay)
+
+	return days
+}
+
+func packmsgs(messages []*hipchat.Message) []*usermsg {
+	if len(messages) == 0 {
+		return nil
+	}
+
+	var groups []*usermsg
+
+	username := name(messages[0])
+	msgs := []string{}
+	for _, msg := range messages {
+		if n := name(msg); n != username {
+			groups = append(groups, &usermsg{
+				username: username,
+				msgs:     msgs,
+			})
+			username = n
+			msgs = []string{}
+		}
+
+		msgs = append(msgs, msg.Message)
+	}
+	groups = append(groups, &usermsg{
+		username: username,
+		msgs:     msgs,
+	})
+
+	return groups
+}
+
+func formatmsg(msg string) string {
+	return strings.Join(strings.Split(msg, "\n"), "\n"+strings.Repeat(" ", 30)+" | ")
+}
+
+func name(msg *hipchat.Message) string {
+	switch from := msg.From.(type) {
+	case string:
+		return from
+	case map[string]interface{}:
+		if from["name"].(string) != "" {
+			return from["name"].(string)
+		}
+		return from["mention_name"].(string)
+	}
+
+	return ""
 }
 
 func check(err error) {
