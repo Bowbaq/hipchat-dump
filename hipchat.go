@@ -73,6 +73,8 @@ func main() {
 func dumpMessages(token, filename string) error {
 	h := hipchat.NewClient(token)
 
+	fmt.Println("Fetching data from the HipChat API. This may take several minutes")
+
 	users, err := getUsers(h)
 	if err != nil {
 		return err
@@ -80,7 +82,7 @@ func dumpMessages(token, filename string) error {
 
 	conversations := make(map[string][]*hipchat.Message)
 	for _, user := range users {
-		conversations[strconv.Itoa(user.ID)] = getMessages(h, user.ID)
+		conversations[strconv.Itoa(user.ID)] = getMessages(h, user)
 	}
 
 	return writeArchive(users, conversations, filename)
@@ -95,7 +97,7 @@ func getUsers(h *hipchat.Client) (map[string]*hipchat.User, error) {
 	}
 	users, res, err := h.User.List(opt)
 	for res.StatusCode == 429 { // Retry while rate-limited
-		fmt.Printf(" - rate-limited, sleeping for 15s\nGetting users")
+		// fmt.Printf(" - rate-limited, sleeping for 15s\nGetting users")
 		time.Sleep(15 * time.Second)
 		users, res, err = h.User.List(opt)
 	}
@@ -115,19 +117,19 @@ func (msgs byLeastRecent) Len() int           { return len(msgs) }
 func (msgs byLeastRecent) Less(i, j int) bool { return msgs[i].Date < msgs[j].Date }
 func (msgs byLeastRecent) Swap(i, j int)      { msgs[i], msgs[j] = msgs[j], msgs[i] }
 
-func getMessages(h *hipchat.Client, userID int) []*hipchat.Message {
-	fmt.Printf("Getting messages for %d", userID)
+func getMessages(h *hipchat.Client, user *hipchat.User) []*hipchat.Message {
+	fmt.Printf("Getting conversation with %s", username(user))
 
-	uniqueMessages := getMessagesPage(h, userID, "recent", 0)
+	uniqueMessages := getMessagesPage(h, user, "recent", 0)
 	if len(uniqueMessages) == 0 {
-		fmt.Println(" - Done [0]")
+		fmt.Println(" - Done [0 messages]")
 		return []*hipchat.Message{}
 	}
 
 	now := time.Now().Add(-1 * time.Minute).UTC().Format(time.RFC3339)
 	start := 0
 	for {
-		page := getMessagesPage(h, userID, now, start)
+		page := getMessagesPage(h, user, now, start)
 		for _, msg := range page {
 			uniqueMessages[msg.ID] = msg
 		}
@@ -144,13 +146,13 @@ func getMessages(h *hipchat.Client, userID int) []*hipchat.Message {
 		messages = append(messages, msg)
 	}
 	sort.Sort(byLeastRecent(messages))
-	fmt.Printf(" - Done [%d]\n", len(messages))
+	fmt.Printf(" - Done [%d messages]\n", len(messages))
 
 	return messages
 }
 
-func getMessagesPage(h *hipchat.Client, userID int, date string, startIndex int) map[string]*hipchat.Message {
-	u := fmt.Sprintf("user/%d/history", userID)
+func getMessagesPage(h *hipchat.Client, user *hipchat.User, date string, startIndex int) map[string]*hipchat.Message {
+	u := fmt.Sprintf("user/%d/history", user.ID)
 	opt := &hipchat.HistoryOptions{
 		ListOptions: hipchat.ListOptions{
 			MaxResults: apiPageSize,
@@ -169,7 +171,7 @@ func getMessagesPage(h *hipchat.Client, userID int, date string, startIndex int)
 	var result hipchat.History
 	res, err := h.Do(req, &result)
 	for res.StatusCode == 429 { // Retry while rate-limited
-		fmt.Printf(" - rate-limited, sleeping for 15s\nGetting messages for %d", userID)
+		// fmt.Printf(" - rate-limited, sleeping for 15s\nGetting conversation with %s", username(user))
 		time.Sleep(15 * time.Second)
 		res, err = h.Do(req, &result)
 	}
@@ -195,11 +197,7 @@ func writeArchive(users map[string]*hipchat.User, conversations map[string][]*hi
 			continue
 		}
 
-		username := users[userID].Name
-		if username == "" {
-			username = users[userID].MentionName
-		}
-		f, err := w.Create("conversations/" + username + ".txt")
+		f, err := w.Create("conversations/" + username(users[userID]) + ".txt")
 		if err != nil {
 			return err
 		}
@@ -335,6 +333,14 @@ func name(msg *hipchat.Message) string {
 	}
 
 	return ""
+}
+
+func username(user *hipchat.User) string {
+	if user.Name != "" {
+		return user.Name
+	}
+
+	return user.MentionName
 }
 
 func check(err error) {
