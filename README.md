@@ -27,10 +27,10 @@ In order to get your private messages from HipChat you'll first need to obtain a
 3. Create a token with the `view_group` and `view_messages` scopes.
 
    ![Token Creation](/imgs/create-token.png?raw=true "Token Creation")
-4. Copy the generated token in your clipboard
+4. You should now see your API token
 
    ![Token Created](/imgs/token-created.png?raw=true "Token Created")
-5. In the Terminal, paste the following command, replacing `<api token>` with the token you copied in step 4.
+5. In the Terminal, paste the following command, replacing `<api token>` with the token from step 4.
 
    `/usr/local/hipchat dump -f "$HOME/Documents/hipchat-messages.zip" -t <api token>`
 
