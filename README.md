@@ -13,7 +13,8 @@ Hipchat lets you download an archive of your private (1-1) hipchat conversations
 2. Paste the command below:
 
    `curl -fsSL https://raw.githubusercontent.com/Bowbaq/hipchat/master/install | bash`
-3. After a few seconds, `Installation complete` should appear in your Terminal window
+3. After a few seconds, `Installation complete` should appear in your Terminal window. Keep that window open,
+   you'll need it to download your messages.
 
 ### Manual Steps
 
@@ -39,5 +40,5 @@ In order to get your private messages from HipChat you'll need to obtain an API 
 4. Copy the generated token in your clipboard
 
    ![Token Created](/imgs/token-created.png?raw=true "Token Created")
-5. In the Terminal, paste the following command, replacing `<api token>` with the token generated in step 3.
-   `/usr/local/hipchat dump -t <api token> -d "$HOME/Documents/hipchat-messages.zip"`
+5. In the Terminal, paste the following command, replacing `<api token>` with the token you copied in step 4.
+   `/usr/local/hipchat dump -t <api token> -f "$HOME/Documents/hipchat-messages.zip"`
