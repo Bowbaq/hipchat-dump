@@ -50,6 +50,10 @@ func main() {
 					Name:  "filename, f",
 					Usage: "Path where the archive will be written. Defaults to " + defaultArchivePath(),
 				},
+				cli.BoolFlag{
+					Name:  "include-deleted-users, d",
+					Usage: "Set this flag to include conversations with deleted users. You may need additional permissions.",
+				},
 			},
 			Action: func(c *cli.Context) {
 				if !c.IsSet("token") {
@@ -62,7 +66,7 @@ func main() {
 					filename = defaultArchivePath()
 				}
 
-				check(dumpMessages(c.String("token"), filename))
+				check(dumpMessages(c.String("token"), filename, c.Bool("include-deleted-users")))
 				fmt.Println("Archive was written at", filename)
 			},
 		},
@@ -70,12 +74,12 @@ func main() {
 	app.Run(os.Args)
 }
 
-func dumpMessages(token, filename string) error {
+func dumpMessages(token, filename string, includeDeleted bool) error {
 	h := hipchat.NewClient(token)
 
 	fmt.Println("Fetching data from the HipChat API. This may take several minutes")
 
-	users, err := getUsers(h)
+	users, err := getUsers(h, includeDeleted)
 	if err != nil {
 		return err
 	}
@@ -88,12 +92,13 @@ func dumpMessages(token, filename string) error {
 	return writeArchive(users, conversations, filename)
 }
 
-func getUsers(h *hipchat.Client) (map[string]*hipchat.User, error) {
+func getUsers(h *hipchat.Client, includeDeleted bool) (map[string]*hipchat.User, error) {
 	fmt.Print("Getting users")
 	opt := &hipchat.UserListOptions{
 		ListOptions: hipchat.ListOptions{
 			MaxResults: apiPageSize,
 		},
+		IncludeDeleted: includeDeleted,
 	}
 	users, res, err := h.User.List(opt)
 	for res.StatusCode == 429 { // Retry while rate-limited
