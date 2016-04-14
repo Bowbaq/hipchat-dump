@@ -14,19 +14,21 @@ do_install() {
   local PLATFORM="$1"
   local INSTALL_PATH="$2"
 
+  mkdir -p "$INSTALL_PATH"
+
   local URL=$(get_latest_url "$PLATFORM")
-  curl -sL -o "$INSTALL_PATH/hipchat" "$URL"
-  chmod u+x "$INSTALL_PATH/hipchat"
+  curl -sL -o "$INSTALL_PATH/hipchat-archive" "$URL"
+  chmod u+x "$INSTALL_PATH/hipchat-archive"
 
   echo "Installation complete"
 }
 
 install_osx() {
-  do_install "darwin" "/usr/local"
+  do_install "darwin" "~/bin"
 }
 
 install_linux() {
-  do_install "linux" "/usr/local"
+  do_install "linux" "~/bin"
 }
 
 case "$OSTYPE" in
