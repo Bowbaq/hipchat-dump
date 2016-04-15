@@ -32,45 +32,39 @@ type archive struct {
 func main() {
 	app := cli.NewApp()
 	app.Name = "hipchat"
-	app.Usage = "Archive your HipChat private messages and search them"
+	app.Usage = "Archive your HipChat private messages"
 	app.Version = Version
 	app.HideVersion = true
 
-	app.Commands = []cli.Command{
-		{
-			Name:    "dump",
-			Aliases: []string{"d"},
-			Usage:   "Archive your HipChat private messages",
-			Flags: []cli.Flag{
-				cli.StringFlag{
-					Name:  "token, t",
-					Usage: "(required) HipChat auth token with view_group, view_messages scope.\n\tSee https://www.hipchat.com/account/api",
-				},
-				cli.StringFlag{
-					Name:  "filename, f",
-					Usage: "Path where the archive will be written. Defaults to " + defaultArchivePath(),
-				},
-				cli.BoolFlag{
-					Name:  "include-deleted-users, d",
-					Usage: "Set this flag to include conversations with deleted users. You may need additional permissions.",
-				},
-			},
-			Action: func(c *cli.Context) {
-				if !c.IsSet("token") {
-					cli.ShowSubcommandHelp(c)
-					return
-				}
-
-				filename := c.String("filename")
-				if filename == "" {
-					filename = defaultArchivePath()
-				}
-
-				check(dumpMessages(c.String("token"), filename, c.Bool("include-deleted-users")))
-				fmt.Println("Archive was written at", filename)
-			},
+	app.Flags = []cli.Flag{
+		cli.StringFlag{
+			Name:  "token, t",
+			Usage: "(required) HipChat auth token with view_group, view_messages scope.\n\tSee https://www.hipchat.com/account/api",
+		},
+		cli.StringFlag{
+			Name:  "filename, f",
+			Usage: "Path where the archive will be written. Defaults to " + defaultArchivePath(),
+		},
+		cli.BoolFlag{
+			Name:  "include-deleted-users, d",
+			Usage: "Set this flag to include conversations with deleted users. You may need additional permissions.",
 		},
 	}
+	app.Action = func(c *cli.Context) {
+		if !c.IsSet("token") {
+			cli.ShowSubcommandHelp(c)
+			return
+		}
+
+		filename := c.String("filename")
+		if filename == "" {
+			filename = defaultArchivePath()
+		}
+
+		check(dumpMessages(c.String("token"), filename, c.Bool("include-deleted-users")))
+		fmt.Println("Archive was written at", filename)
+	}
+
 	app.Run(os.Args)
 }
 
@@ -102,11 +96,13 @@ func getUsers(h *hipchat.Client, includeDeleted bool) (map[string]*hipchat.User,
 	}
 	users, res, err := h.User.List(opt)
 	for res.StatusCode == 429 { // Retry while rate-limited
-		// fmt.Printf(" - rate-limited, sleeping for 15s\nGetting users")
 		time.Sleep(15 * time.Second)
 		users, res, err = h.User.List(opt)
 	}
 	fmt.Printf(" - Done [%d]\n", len(users))
+	if err != nil {
+		return nil, err
+	}
 
 	usersByID := make(map[string]*hipchat.User)
 	for i, user := range users {
@@ -176,7 +172,6 @@ func getMessagesPage(h *hipchat.Client, user *hipchat.User, date string, startIn
 	var result hipchat.History
 	res, err := h.Do(req, &result)
 	for res.StatusCode == 429 { // Retry while rate-limited
-		// fmt.Printf(" - rate-limited, sleeping for 15s\nGetting conversation with %s", username(user))
 		time.Sleep(15 * time.Second)
 		res, err = h.Do(req, &result)
 	}
