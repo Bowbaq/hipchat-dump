@@ -35,6 +35,7 @@ func main() {
 	app.Usage = "Archive your HipChat private messages"
 	app.Version = Version
 	app.HideVersion = true
+	app.HideHelp = true
 
 	app.Flags = []cli.Flag{
 		cli.StringFlag{
@@ -43,11 +44,11 @@ func main() {
 		},
 		cli.StringFlag{
 			Name:  "filename, f",
-			Usage: "Path where the archive will be written. Defaults to " + defaultArchivePath(),
+			Usage: "Path where the archive will be written.\n\tDefaults to " + defaultArchivePath(),
 		},
 		cli.BoolFlag{
 			Name:  "include-deleted-users, d",
-			Usage: "Set this flag to include conversations with deleted users. You may need additional permissions.",
+			Usage: "Set this flag to include conversations with deleted users.\n\tYou may need additional permissions.",
 		},
 	}
 	app.Action = func(c *cli.Context) {
@@ -348,4 +349,15 @@ func check(err error) {
 		fmt.Println(err)
 		os.Exit(-1)
 	}
+}
+
+func init() {
+	cli.SubcommandHelpTemplate = `NAME:
+   {{.HelpName}} - {{.Usage}}
+{{if .Flags}}
+OPTIONS:
+   {{range .Flags}}
+{{.}}
+   {{end}}{{end}}
+`
 }
