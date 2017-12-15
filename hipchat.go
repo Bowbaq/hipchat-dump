@@ -96,8 +96,16 @@ func getUsers(h *hipchat.Client, includeDeleted bool) (map[string]*hipchat.User,
 		IncludeDeleted: includeDeleted,
 	}
 	users, res, err := h.User.List(opt)
-	for res.StatusCode == 429 { // Retry while rate-limited
-		time.Sleep(15 * time.Second)
+
+	for err != nil || res.StatusCode == 429 { // Retry while rate-limited
+		if err != nil {
+			fmt.Printf("Got error: %v\n", err)
+		} else {
+			fmt.Println("Got StatusCode 429")
+		}
+		delay := 15 * time.Second
+		fmt.Printf("Sleeping for %v...\n", delay)
+		time.Sleep(delay)
 		users, res, err = h.User.List(opt)
 	}
 	fmt.Printf(" - Done [%d]\n", len(users))
@@ -172,8 +180,15 @@ func getMessagesPage(h *hipchat.Client, user *hipchat.User, date string, startIn
 
 	var result hipchat.History
 	res, err := h.Do(req, &result)
-	for res.StatusCode == 429 { // Retry while rate-limited
-		time.Sleep(15 * time.Second)
+	for err != nil || res.StatusCode == 429 { // Retry while rate-limited
+		if err != nil {
+			fmt.Printf("Got error: %v\n", err)
+		} else {
+			fmt.Println("Got StatusCode 429")
+		}
+		delay := 15 * time.Second
+		fmt.Printf("Sleeping for %v...\n", delay)
+		time.Sleep(delay)
 		res, err = h.Do(req, &result)
 	}
 	if err != nil {
